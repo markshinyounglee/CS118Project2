@@ -1,43 +1,37 @@
 #pragma once
 
 #include <openssl/evp.h>
+#include <stdint.h>
 
-#define SECRET_SIZE 32
-#define IV_SIZE 16
-#define MAC_SIZE 32
+// libcrypto internal representation of keys; use these to verify
 
-// libcrypto internal repr. of keys
-extern EVP_PKEY* ec_priv_key; // Local private key
-extern EVP_PKEY* ec_peer_public_key; // Public key of other host
-extern EVP_PKEY* ec_ca_public_key; // Public key of certificate authority
+// Public key of your peer (use `load_peer_public_key` on data from the Server
+// Hello/Key Exchange Request first)
+extern EVP_PKEY* ec_peer_public_key;
 
-// Loaded certificate
-extern int cert_size;
-extern char* certificate;
+// Public key of the certificate authority (use `load_ca_public_key` first)
+extern EVP_PKEY* ec_ca_public_key;
 
-// Loaded public key byte repr.
-extern int pub_key_size;
-extern char* public_key;
+// TLV 0xA0 encoded certificate (use `load_certificate` first)
+extern uint8_t* certificate;
+extern size_t cert_size;
 
-// ECDH secret
-extern char* secret;
+// DER encoded public key (use `derive_public_key` first)
+extern uint8_t* public_key;
+extern size_t pub_key_size;
 
-// Key for encryption/decryption
-extern char* enc_key;
-
-// Key for message authentication
-extern char* mac_key;
-
-// From file, load DER formatted private key into `ec_priv_key`
+// From file, load DER formatted private key
 void load_private_key(char* filename);
 
 // From buffer, load DER formatted peer key into `ec_peer_public_key`
-void load_peer_public_key(char* peer_key, size_t size);
+void load_peer_public_key(uint8_t* peer_key, size_t size);
 
-// From file, load DER formatted certificate authority public key into `ec_ca_public_key`
+// From file, load DER formatted certificate authority public key into
+// `ec_ca_public_key`
 void load_ca_public_key(char* filename);
 
-// From file, load ECDSA signed certificate into buffer `certificate`
+// From file, load 0xA0 type certificate into buffer `certificate`
+// with size `cert_size`
 void load_certificate(char* filename);
 
 // Generate private key from the NID_X9_62_prime256v1 elliptic curve
@@ -45,6 +39,7 @@ void generate_private_key();
 
 // From private key (make sure to call `load_private_key` or
 // `generate_private_key` first), derive public key point on elliptic curve
+// Loads into buffer `public_key` with size `pub_key_size`
 void derive_public_key();
 
 // From private key (make sure to call `load_private_key` or
@@ -59,33 +54,34 @@ void derive_keys();
 // `generate_private_key` first), sign a buffer by hashing it with SHA-256 then
 // applying ECDSA
 // Returns size of signature
-size_t sign(char* data, size_t size, char* signature);
+size_t sign(uint8_t* data, size_t size, uint8_t* signature);
 
 // Using a certain authority (typically `ec_peer_public_key` or
 // `ec_ca_public_key`), verify the authenticity of an ECDSA signature
 // Returns 1 if verified successfully, other values if not
-int verify(char* data, size_t size, char* signature, size_t sig_size, EVP_PKEY* authority);
+int verify(uint8_t* data, size_t size, uint8_t* signature, size_t sig_size,
+           EVP_PKEY* authority);
 
 // Generate cryptographically secure random data
-void generate_nonce(char* buf, int size);
+void generate_nonce(uint8_t* buf, size_t size);
 
 // Encrypt data using derived shared secret (make sure to call `derive_secret`
-// first). Uses AES-256-CBC with PKCS7 padding. Buffers `iv` and `cipher` will have
-// the resulting initial vector and ciphertext. 
-// Set `using_mac` to a non-zero value to use the `enc_key` for encryption
-// Returns size of ciphertext
-size_t encrypt_data(char *data, size_t size, char *iv, char *cipher, int using_mac);
+// first). Uses AES-256-CBC with PKCS7 padding. Buffers `iv` and `cipher` will
+// have the resulting initial vector and ciphertext. Returns size of ciphertext
+size_t encrypt_data(uint8_t* data, size_t size, uint8_t* iv, uint8_t* cipher);
 
 // Decrypt data using derived shared secret (make sure to call `derive_secret`
 // first). Uses AES-256-CBC with PKCS7 padding. Buffer `data` will have
-// the resulting decrypted data. 
-// Set `using_mac` to a non-zero value to use the `enc_key` for decryption
+// the resulting decrypted data.
 // Returns size of data
-size_t decrypt_cipher(char *cipher, size_t size, char *iv, char *data, int using_mac);
+size_t decrypt_cipher(uint8_t* cipher, size_t size, uint8_t* iv, uint8_t* data);
 
-// Using the MAC key, generate an HMAC SHA-256 digest of `data` and place it in the
-// buffer `digest`. Digest will always be 32 bytes (since SHA-256).
-void hmac(char* data, size_t size, char* digest);
+// Using the MAC key, generate an HMAC SHA-256 digest of `data` and place it in
+// the buffer `digest`. Digest will always be 32 bytes (since SHA-256).
+void hmac(uint8_t* data, size_t size, uint8_t* digest);
+
+// Derive own self-signed certificate (0xA0)
+void derive_self_signed_certificate();
 
 // Clean up all buffers and keys
 void clean_up();
