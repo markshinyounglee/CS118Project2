@@ -179,6 +179,7 @@ packet* get_data() {
         // Get data from layer
         char buffer[sizeof(packet) + MAX_PAYLOAD] = {0};
         packet* pkt = (packet*) &buffer;
+        // input() requests the upper layer to fetch data
         length = input(pkt->payload, length);
         if (length <= 0 && state != CLIENT_AWAIT_2)
             return NULL;
