@@ -73,6 +73,9 @@
 #define RTOD 2
 #define DUPA 3
 
+// Min function macro
+#define MIN(a, b) (a < b) ? a : b
+
 // Structs
 typedef struct {
     uint32_t ack;
@@ -139,4 +142,30 @@ static inline void print_hex(uint8_t* buf, size_t len) {
         fprintf(stderr, "%02x ", *(buf + i));
     }
     fprintf(stderr, "\n");
+}
+
+static inline void print_tlv(uint8_t* buffer, size_t len) {
+    uint8_t* buf = buffer;
+
+    while (buf - buffer < len) {
+        uint8_t type = *buf;
+        fprintf(stderr, "Type: 0x%02x\n", type);
+        buf += 1;
+        if (buf - buffer >= len)
+            return;
+
+        uint16_t length = ntohs(*((uint16_t*) buf));
+        buf += 2;
+        fprintf(stderr, "Length: %hu\n", length);
+
+        if (type == CLIENT_HELLO || type == SERVER_HELLO ||
+            type == KEY_EXCHANGE_REQUEST || type == FINISHED ||
+            type == CERTIFICATE || type == DATA)
+            continue;
+        else {
+            uint16_t min_length = MIN(len - (buf - buffer), length);
+            print_hex(buf, min_length);
+            buf += min_length;
+        }
+    }
 }

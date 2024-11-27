@@ -25,10 +25,10 @@ void init_sec(int initial_state) {
         generate_private_key(); 
         derive_public_key(); 
         derive_self_signed_certificate(); 
-        load_ca_public_key("../keys/ca_public_key.bin"); 
+        load_ca_public_key("./keys/ca_public_key.bin"); 
     } else if (state_sec == SERVER_CLIENT_HELLO_AWAIT) { 
-        load_certificate("../keys/server_cert.bin"); 
-        load_private_key("../keys/server_key.bin"); 
+        load_certificate("./keys/server_cert.bin"); 
+        load_private_key("./keys/server_key.bin"); 
         derive_public_key(); 
     } 
     generate_nonce(nonce, NONCE_SIZE);
@@ -51,10 +51,13 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // first bit is NONCE_CLIENT_HELLO
         // second two bits are NONCE_SIZE
         // and the remaining 32 bits are nonce
-        int nonce_total_size = TLV_maker(buf, NONCE_CLIENT_HELLO, NONCE_SIZE, nonce);
+        uint8_t* load;
+        int nonce_total_size = TLV_maker(load, NONCE_CLIENT_HELLO, NONCE_SIZE, nonce);
         assert(nonce_total_size == 35);
-        int load_size = TLV_maker(buf, CLIENT_HELLO, nonce_total_size, buf);
+        int load_size = TLV_maker(buf, CLIENT_HELLO, nonce_total_size, load);
         
+        print_tlv(buf, load_size);
+
         state_sec = CLIENT_SERVER_HELLO_AWAIT;
         return load_size;
     }
@@ -88,6 +91,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // write to buf
         int load_size = TLV_maker(buf, SERVER_HELLO, total_size, load);
 
+        print_tlv(buf, load_size);
         state_sec = SERVER_KEY_EXCHANGE_REQUEST_AWAIT;
         return load_size;
     }
@@ -124,6 +128,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // write to buf
         load_size = TLV_maker(buf, KEY_EXCHANGE_REQUEST, load_size, load);
 
+        print_tlv(buf, load_size);
         state_sec = CLIENT_FINISHED_AWAIT;
         return load_size;
     }
@@ -135,7 +140,9 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         char empty[1] = {0};
         int finish_packet_size = TLV_maker(buf, FINISHED, 0, empty);
 
+        print_tlv(buf, finish_packet_size);
         state_sec = DATA_STATE;
+
         return finish_packet_size;
     }
     case DATA_STATE: {
@@ -145,8 +152,12 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // CT refers to the resulting ciphertext size
         // fprintf(stderr, "SEND DATA PT %ld CT %lu\n", stdin_size, cip_size);
         uint8_t* data;
-        int data_size = read(STDIN_FILENO, data, plaintxt_length(max_length));
-        
+        int data_size = input_io(data, plaintxt_length(max_length));
+        if (data_size <= 0)
+        {
+            break; // nothing read
+        }
+
         uint8_t *iv, *cyphertext, *digest;
 
         // iv is fixed as 16 bytes
@@ -172,6 +183,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // #define CIPHERTEXT 0x42
         // #define MESSAGE_AUTHENTICATION_CODE 0x43
 
+        print_tlv(buf, load_size);
         return load_size;
     }
     default:
@@ -183,6 +195,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 void output_sec(uint8_t* buf, size_t length) {
     // This passes it directly to standard output (working like Project 1)
     // return output_io(buf, length);
+    print_tlv(buf, length);
 
     switch (state_sec) {
     case SERVER_CLIENT_HELLO_AWAIT: {
@@ -340,7 +353,7 @@ void output_sec(uint8_t* buf, size_t length) {
         int data_size = decrypt_cipher(&buf[cypher_loc], cypher_size, &buf[iv_loc], data);
 
         // 3. write decrypted data to standard output
-        write(STDOUT_FILENO, data, data_size); 
+        output_io(data, data_size); 
         
         break;
     }
@@ -354,22 +367,24 @@ uint32_t TLV_maker(uint8_t* buf, uint8_t type, uint16_t length, uint8_t* value)
     uint32_t load_size = TYPE_SIZE + LENGTH_SIZE + length;  // T (1B) + L (2B) + V (NONCE_SIZE)
     uint8_t load[load_size];
     load[0] = type;  // type is 1 byte
-    load[1] = length >> BYTE_SIZE; // length in network should be big-endian
-    load[2] = length; 
+    // how to copy int into byte array: https://community.intel.com/t5/Intel-Integrated-Performance/Convert-an-int-to-a-byte-array/td-p/888464
+    uint16_t len = htons(length);
+    memcpy(load+1, &len, sizeof(len)); // length in network should be big-endian
     memcpy(load+3, value, length); // value is arbitary length
     memcpy(buf, load, load_size);
     return load_size;
 }
 
-// TODO: implement a function that searches 
-// for the location of the data
+// function that searches for the index [location] of the data
 // e.g. location of certificate buffer
 // idea: check the type of data (*data) and see if it matches with type
 // if yes, return that location + 3 (offset)
 // else, retrieve the length and jump 
 int find_location(uint8_t* data, int state_sec, uint8_t type)
 {
-    assert(state_sec == CLIENT_SERVER_HELLO_AWAIT || state_sec == SERVER_KEY_EXCHANGE_REQUEST_AWAIT || state_sec == DATA_STATE);
+    assert(state_sec == CLIENT_SERVER_HELLO_AWAIT 
+            || state_sec == SERVER_KEY_EXCHANGE_REQUEST_AWAIT 
+            || state_sec == DATA_STATE);
     
     uint8_t* locator = data;
     int total_size = 0;
@@ -380,13 +395,15 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
         {
             return currlen; // return the beginning index of field 
         }
-        else if (total_size != 0 && total_size <= currlen) // maximum exceeded
+        else if (total_size != 0 && currlen >= total_size) // maximum exceeded
         {
             break;
         }
-        if(*locator == SERVER_HELLO || *locator == KEY_EXCHANGE_REQUEST || *locator == DATA)
+        if(*locator == SERVER_HELLO 
+            || *locator == KEY_EXCHANGE_REQUEST 
+            || *locator == DATA)
         {
-            total_size += get_size(data, currlen);
+            total_size = 3 + get_size(data, currlen);
             locator += 3; // jump to the payload
         }
         else
@@ -403,7 +420,7 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
 // location is found by find_location
 uint16_t get_size(uint8_t* data, int bufloc) 
 {
-    return (uint16_t) (data[bufloc-2] << BYTE_SIZE + data[bufloc-1]); // convert to little endian
+    return ntohs(*((uint16_t*) &data[bufloc-2])); // convert to little endian
 }
 // compute the max length of plain text that could be read at a time
 uint16_t plaintxt_length(uint16_t payload_length)
