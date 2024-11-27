@@ -147,7 +147,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         uint8_t* data;
         int data_size = read(STDIN_FILENO, data, plaintxt_length(max_length));
         
-        uint8_t* iv, cyphertext, digest;
+        uint8_t *iv, *cyphertext, *digest;
 
         // iv is fixed as 16 bytes
         // populate iv and cypertext
@@ -158,7 +158,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // create TLV packets for each component
         int iv_size = TLV_maker(iv, INITIALIZATION_VECTOR, IV_SIZE, iv);
         cyphertext_size = TLV_maker(cyphertext, CIPHERTEXT, cyphertext_size, cyphertext);
-        digest_size = TLV_maker(digest, MESSAGE_AUTHENTICATION_CODE, MAC_SIZE, digest);
+        int digest_size = TLV_maker(digest, MESSAGE_AUTHENTICATION_CODE, MAC_SIZE, digest);
 
         uint8_t* load;
         memcpy(load, iv, iv_size);
@@ -330,9 +330,17 @@ void output_sec(uint8_t* buf, size_t length) {
         
         // take ONE packet out of the buffer
         // 1. Unpack the packet
+        int cypher_loc = find_location(buf, state_sec, CIPHERTEXT);
+        int cypher_size = get_size(buf, cypher_loc);
+        int iv_loc = find_location(buf, state_sec, INITIALIZATION_VECTOR);
+        // iv_size is fixed to IV_SIZE (consts.h)
+
         // 2. Decrypt the ciphertext to plaintext
-        // 3. write to standard output
-        // write(STDOUT_FILENO, buf, length); 
+        uint8_t* data;
+        int data_size = decrypt_cipher(&buf[cypher_loc], cypher_size, &buf[iv_loc], data);
+
+        // 3. write decrypted data to standard output
+        write(STDOUT_FILENO, data, data_size); 
         
         break;
     }
@@ -363,29 +371,29 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
 {
     assert(state_sec == CLIENT_SERVER_HELLO_AWAIT || state_sec == SERVER_KEY_EXCHANGE_REQUEST_AWAIT || state_sec == DATA_STATE);
     
-    *tlv_pkt locator = (*tlv_pkt) data;
+    uint8_t* locator = data;
     int total_size = 0;
     while(1)
     {
+        int currlen = locator - data + 3;
         if(*locator == type)
         {
-            return (locator - data) + 3; // return the beginning index of field 
+            return currlen; // return the beginning index of field 
         }
-        else if (total_size != 0 && total_size <= (locator - data) + 3) // maximum exceeded
+        else if (total_size != 0 && total_size <= currlen) // maximum exceeded
         {
             break;
         }
         if(*locator == SERVER_HELLO || *locator == KEY_EXCHANGE_REQUEST || *locator == DATA)
         {
-            total_jumps = get_size(data, (locator - data) + 3);
+            total_size += get_size(data, currlen);
             locator += 3; // jump to the payload
         }
         else
         {
-            int jump = get_size(data, (locator - data)+3);
+            int jump = get_size(data, currlen);
             locator += jump;
         }
-        locator = (*tlv_pkt) locator;
     }
 
     fprintf(stderr, "Finding location failed for %d in %d\n", state_sec, type);
