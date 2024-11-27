@@ -7,6 +7,7 @@
 #include "consts.h"
 #include "io.h"
 #include "security.h"
+#include "sec.h"
 
 #define BYTE_SIZE 8
 #define TYPE_SIZE 1
@@ -81,7 +82,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         uint8_t load[0];
         memcpy(load, nonce_buf, nonce_size);
         memcpy(load+nonce_size, cert_buf, certificate_size);
-        memcpy(load+nonce_size+certificate_size, signature_size, nonce_sign_buf);
+        memcpy(load+nonce_size+certificate_size, nonce_sign_buf, signature_size);
         int total_size = nonce_size + certificate_size + signature_size;
 
         // write to buf
@@ -112,8 +113,8 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         
         // sign server's nonce with client's private key
         uint8_t nonce_signature[0];
-        signature_size = sign(peer_nonce, NONCE_SIZE, nonce_signature);
-        int signature_size = TLV_maker(nonce_signature, NONCE_SIGNATURE_KEY_EXCHANGE_REQUEST, signature_size, nonce_signature);
+        int signature_size = sign(peer_nonce, NONCE_SIZE, nonce_signature);
+        signature_size = TLV_maker(nonce_signature, NONCE_SIGNATURE_KEY_EXCHANGE_REQUEST, signature_size, nonce_signature);
 
         uint8_t load[0];
         memcpy(load, certificate, cert_size);
@@ -143,8 +144,35 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // PT refers to the amount you read from stdin in bytes
         // CT refers to the resulting ciphertext size
         // fprintf(stderr, "SEND DATA PT %ld CT %lu\n", stdin_size, cip_size);
+        uint8_t* data;
+        int data_size = read(STDIN_FILENO, data, plaintxt_length(max_length));
+        
+        uint8_t* iv, cyphertext, digest;
 
-        return 0;
+        // iv is fixed as 16 bytes
+        // populate iv and cypertext
+        int cyphertext_size = encrypt_data(data, data_size, iv, cyphertext);
+        // get an HMAC SHA-256 digest of data
+        hmac(data, data_size, digest);
+
+        // create TLV packets for each component
+        int iv_size = TLV_maker(iv, INITIALIZATION_VECTOR, IV_SIZE, iv);
+        cyphertext_size = TLV_maker(cyphertext, CIPHERTEXT, cyphertext_size, cyphertext);
+        digest_size = TLV_maker(digest, MESSAGE_AUTHENTICATION_CODE, MAC_SIZE, digest);
+
+        uint8_t* load;
+        memcpy(load, iv, iv_size);
+        memcpy(load+iv_size, cyphertext, cyphertext_size);
+        memcpy(load+iv_size+cyphertext_size, digest, digest_size);
+        int load_size = iv_size + cyphertext_size + digest_size;
+        load_size = TLV_maker(buf, DATA, load_size, load);
+        // Macros for reference
+        // #define DATA 0x40
+        // #define INITIALIZATION_VECTOR 0x41
+        // #define CIPHERTEXT 0x42
+        // #define MESSAGE_AUTHENTICATION_CODE 0x43
+
+        return load_size;
     }
     default:
         return 0;
@@ -176,15 +204,15 @@ void output_sec(uint8_t* buf, size_t length) {
 
         print("RECV SERVER HELLO");
 
-        // load server's public key as our peer key
-        // now server public key is in 'ec_peer_public_key' for the server
-        load_peer_public_key(&buf[peer_pubkey_loc], peer_pubkey_size);
-
         /* Insert Server Hello receiving logic here */
         int peer_sign_loc = find_location(buf, state_sec, SIGNATURE);
         uint16_t peer_sign_size = get_size(buf, peer_sign_loc);
         int peer_pubkey_loc = find_location(buf, state_sec, PUBLIC_KEY);
         uint16_t peer_pubkey_size = get_size(buf, peer_pubkey_loc);
+
+        // load server's public key as our peer key
+        // now server public key is in 'ec_peer_public_key' for the server
+        load_peer_public_key(&buf[peer_pubkey_loc], peer_pubkey_size);
 
         // 1. verify that certificate was signed by CA
         int status = verify(
@@ -233,15 +261,16 @@ void output_sec(uint8_t* buf, size_t length) {
 
         print("RECV KEY EXCHANGE REQUEST");
 
+        // 1. verify that the certificate was self-signed
+        int client_sign_loc = find_location(buf, state_sec, SIGNATURE);
+        int client_sign_size = get_size(buf, client_sign_loc);
+        int client_key_loc = find_location(buf, state_sec, PUBLIC_KEY);
+        int client_key_size = get_size(buf, client_key_loc);
+
         /* Insert Key Exchange Request receiving logic here */
         // load peer public key (in this case, server loads client's public key)
         load_peer_public_key(&buf[client_key_loc], client_key_size);
 
-        // 1. verify that the certificate was self-signed
-        int client_sign_loc = find_location(buf, state_sec, SIGNATURE);
-        int client_sign_size = get_size(buf, client_cert_loc);
-        int client_key_loc = find_location(buf, state_sec, PUBLIC_KEY);
-        int client_key_size = get_size(buf, client_key_loc);
         int status = verify(
             &buf[client_key_loc], // raw data (client key)
             client_key_size,
@@ -258,11 +287,11 @@ void output_sec(uint8_t* buf, size_t length) {
         // 2. verify that the server nonce was signed by the client
         int client_signed_nonce_loc = find_location(buf, state_sec, NONCE_SIGNATURE_KEY_EXCHANGE_REQUEST);
         int client_signed_nonce_size = get_size(buf, client_signed_nonce_loc);
-        int status = verify(
+        status = verify(
             nonce, 
             NONCE_SIZE, 
             &buf[client_signed_nonce_loc], 
-            client_signed_nonce_size
+            client_signed_nonce_size,
             ec_peer_public_key
         );
         if (status != 1)
@@ -297,6 +326,13 @@ void output_sec(uint8_t* buf, size_t length) {
         // CT refers to the received ciphertext size
         // fprintf(stderr, "RECV DATA PT %ld CT %hu\n", data_len, cip_len);
         
+        // decode and then write to stdout
+        
+        // take ONE packet out of the buffer
+        // 1. Unpack the packet
+        // 2. Decrypt the ciphertext to plaintext
+        // 3. write to standard output
+        // write(STDOUT_FILENO, buf, length); 
         
         break;
     }
@@ -320,16 +356,39 @@ uint32_t TLV_maker(uint8_t* buf, uint8_t type, uint16_t length, uint8_t* value)
 // TODO: implement a function that searches 
 // for the location of the data
 // e.g. location of certificate buffer
+// idea: check the type of data (*data) and see if it matches with type
+// if yes, return that location + 3 (offset)
+// else, retrieve the length and jump 
 int find_location(uint8_t* data, int state_sec, uint8_t type)
 {
-    switch(state_sec)
+    assert(state_sec == CLIENT_SERVER_HELLO_AWAIT || state_sec == SERVER_KEY_EXCHANGE_REQUEST_AWAIT || state_sec == DATA_STATE);
+    
+    *tlv_pkt locator = (*tlv_pkt) data;
+    int total_size = 0;
+    while(1)
     {
-        case SERVER_CLIENT_HELLO_AWAIT:
-        case CLIENT_SERVER_HELLO_AWAIT:
-        case SERVER_KEY_EXCHANGE_REQUEST_AWAIT:
-        case CLIENT_FINISHED_AWAIT:
-        case DATA_STATE:
+        if(*locator == type)
+        {
+            return (locator - data) + 3; // return the beginning index of field 
+        }
+        else if (total_size != 0 && total_size <= (locator - data) + 3) // maximum exceeded
+        {
+            break;
+        }
+        if(*locator == SERVER_HELLO || *locator == KEY_EXCHANGE_REQUEST || *locator == DATA)
+        {
+            total_jumps = get_size(data, (locator - data) + 3);
+            locator += 3; // jump to the payload
+        }
+        else
+        {
+            int jump = get_size(data, (locator - data)+3);
+            locator += jump;
+        }
+        locator = (*tlv_pkt) locator;
     }
+
+    fprintf(stderr, "Finding location failed for %d in %d\n", state_sec, type);
     return 0;
 }
 // get size of the field
@@ -338,6 +397,7 @@ uint16_t get_size(uint8_t* data, int bufloc)
 {
     return (uint16_t) (data[bufloc-2] << BYTE_SIZE + data[bufloc-1]); // convert to little endian
 }
+// compute the max length of plain text that could be read at a time
 uint16_t plaintxt_length(uint16_t payload_length)
 {
     return ((payload_length - 60) / 16) * 16 - 1;
