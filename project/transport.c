@@ -175,6 +175,7 @@ packet* get_data() {
                               : MAX_PAYLOAD;
         if (length <= 0)
             return NULL;
+        fprintf(stderr, "buffer length (transport layer): %d\n", length);
 
         // Get data from layer
         char buffer[sizeof(packet) + MAX_PAYLOAD] = {0};

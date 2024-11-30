@@ -51,12 +51,15 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // first bit is NONCE_CLIENT_HELLO
         // second two bits are NONCE_SIZE
         // and the remaining 32 bits are nonce
-        uint8_t* load;
+        uint8_t* load = (uint8_t*) malloc(NONCE_SIZE + 3);
         int nonce_total_size = TLV_maker(load, NONCE_CLIENT_HELLO, NONCE_SIZE, nonce);
+        
         assert(nonce_total_size == 35);
         int load_size = TLV_maker(buf, CLIENT_HELLO, nonce_total_size, load);
         
         print_tlv(buf, load_size);
+
+        free(load);
 
         state_sec = CLIENT_SERVER_HELLO_AWAIT;
         return load_size;
@@ -66,32 +69,39 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         /* Insert Server Hello sending logic here */
         // server nonce
-        uint8_t nonce_buf[0];
+        uint8_t* nonce_buf = (uint8_t*) malloc(NONCE_SIZE + 3);
         int nonce_size = TLV_maker(nonce_buf, NONCE_SERVER_HELLO, NONCE_SIZE, nonce);
         
         // certificate
         // load_certificate() already called
         // size: cert_size, buffer: certificate
-        uint8_t cert_buf[0];
+        uint8_t* cert_buf = (uint8_t*) malloc(cert_size + 3);
         int certificate_size = TLV_maker(cert_buf, CERTIFICATE, cert_size, certificate);
 
         // nonce signature 
-        uint8_t nonce_sign_buf[0];
-        uint8_t nonce_signature[0];
+        uint8_t* nonce_signature = (int8_t*) malloc(255);
         int sign_size = sign(peer_nonce, NONCE_SIZE, nonce_signature); 
+        uint8_t* nonce_sign_buf = (uint8_t*) malloc(sign_size + 3);
+        fprintf(stderr, "signature size: %d\n", sign_size);
         int signature_size = TLV_maker(nonce_sign_buf, NONCE_SIGNATURE_SERVER_HELLO, sign_size, nonce_signature);
         
         // put everything in load before writing to buffer
-        uint8_t load[0];
+        int total_size = nonce_size + certificate_size + signature_size;
+        uint8_t* load = (uint8_t*) malloc(total_size);
         memcpy(load, nonce_buf, nonce_size);
         memcpy(load+nonce_size, cert_buf, certificate_size);
         memcpy(load+nonce_size+certificate_size, nonce_sign_buf, signature_size);
-        int total_size = nonce_size + certificate_size + signature_size;
-
+    
         // write to buf
         int load_size = TLV_maker(buf, SERVER_HELLO, total_size, load);
 
         print_tlv(buf, load_size);
+
+        free(nonce_buf);
+        free(cert_buf);
+        free(nonce_sign_buf);
+        free(load);
+
         state_sec = SERVER_KEY_EXCHANGE_REQUEST_AWAIT;
         return load_size;
     }
@@ -116,19 +126,25 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // int certificate_size = TLV_maker(cert_buf, CERTIFICATE, total_size, load);
         
         // sign server's nonce with client's private key
-        uint8_t nonce_signature[0];
+        uint8_t* nonce_signature = (uint8_t*) malloc(255);
         int signature_size = sign(peer_nonce, NONCE_SIZE, nonce_signature);
-        signature_size = TLV_maker(nonce_signature, NONCE_SIGNATURE_KEY_EXCHANGE_REQUEST, signature_size, nonce_signature);
+        uint8_t* nonce_sign_buf = (uint8_t*) malloc(signature_size + 3);
+        int sign_buf_size = TLV_maker(nonce_sign_buf, NONCE_SIGNATURE_KEY_EXCHANGE_REQUEST, signature_size, nonce_signature);
 
-        uint8_t load[0];
+        int load_size = cert_size + sign_buf_size;
+        uint8_t* load = (uint8_t*) malloc(load_size);
         memcpy(load, certificate, cert_size);
-        memcpy(load+cert_size, nonce_signature, signature_size);
-        int load_size = cert_size + signature_size;
+        memcpy(load+cert_size, nonce_sign_buf, sign_buf_size);
 
         // write to buf
         load_size = TLV_maker(buf, KEY_EXCHANGE_REQUEST, load_size, load);
 
         print_tlv(buf, load_size);
+
+        free(nonce_signature);
+        free(nonce_sign_buf);
+        free(load);
+
         state_sec = CLIENT_FINISHED_AWAIT;
         return load_size;
     }
@@ -151,37 +167,51 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // PT refers to the amount you read from stdin in bytes
         // CT refers to the resulting ciphertext size
         // fprintf(stderr, "SEND DATA PT %ld CT %lu\n", stdin_size, cip_size);
-        uint8_t* data;
-        int data_size = input_io(data, plaintxt_length(max_length));
+        int max_data_len = plaintxt_length(max_length);
+        uint8_t* data = (uint8_t*) malloc(max_data_len);
+        int data_size = input_io(data, max_data_len);
         if (data_size <= 0)
         {
             break; // nothing read
         }
 
-        uint8_t *iv, *cyphertext, *digest;
+
+        uint8_t *iv, *ciphertext, *digest;
+        iv = (uint8_t*) malloc(IV_SIZE + 3);
+        ciphertext = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: sufficiently big size
+        digest = (uint8_t*) malloc(MAC_SIZE + 3);
 
         // iv is fixed as 16 bytes
         // populate iv and cypertext
-        int cyphertext_size = encrypt_data(data, data_size, iv, cyphertext);
+        int ciphertext_size = encrypt_data(data, data_size, iv, ciphertext);
         // get an HMAC SHA-256 digest of data
-        hmac(data, data_size, digest);
+        uint8_t* iv_cipher = (uint8_t*) malloc(IV_SIZE + ciphertext_size);
+        memcpy(iv_cipher, iv, IV_SIZE);
+        memcpy(iv_cipher, ciphertext, ciphertext_size); 
+        hmac(iv_cipher, data_size, digest);
 
         // create TLV packets for each component
         int iv_size = TLV_maker(iv, INITIALIZATION_VECTOR, IV_SIZE, iv);
-        cyphertext_size = TLV_maker(cyphertext, CIPHERTEXT, cyphertext_size, cyphertext);
+        ciphertext_size = TLV_maker(ciphertext, CIPHERTEXT, ciphertext_size, ciphertext);
         int digest_size = TLV_maker(digest, MESSAGE_AUTHENTICATION_CODE, MAC_SIZE, digest);
 
-        uint8_t* load;
+        int load_size = iv_size + ciphertext_size + digest_size;
+        uint8_t* load = (uint8_t*) malloc(load_size);
         memcpy(load, iv, iv_size);
-        memcpy(load+iv_size, cyphertext, cyphertext_size);
-        memcpy(load+iv_size+cyphertext_size, digest, digest_size);
-        int load_size = iv_size + cyphertext_size + digest_size;
+        memcpy(load+iv_size, ciphertext, ciphertext_size);
+        memcpy(load+iv_size+ciphertext_size, digest, digest_size);
         load_size = TLV_maker(buf, DATA, load_size, load);
         // Macros for reference
         // #define DATA 0x40
         // #define INITIALIZATION_VECTOR 0x41
         // #define CIPHERTEXT 0x42
         // #define MESSAGE_AUTHENTICATION_CODE 0x43
+
+        free(data);
+        free(iv);
+        free(ciphertext);
+        free(iv_cipher);
+        free(digest);
 
         print_tlv(buf, load_size);
         return load_size;
@@ -206,7 +236,9 @@ void output_sec(uint8_t* buf, size_t length) {
 
         /* Insert Client Hello receiving logic here */
         // put client nonce into peer_nonce
-        memcpy(peer_nonce, buf, length);
+        int nonce_loc = find_location(buf, state_sec, NONCE_SIZE);
+
+        memcpy(peer_nonce, &buf[nonce_loc], NONCE_SIZE);
 
         state_sec = SERVER_SERVER_HELLO_SEND;
         break;
@@ -262,6 +294,7 @@ void output_sec(uint8_t* buf, size_t length) {
         memcpy(&buf[peer_nonce_loc], peer_nonce, NONCE_SIZE);
 
         // generate ENC and MAC keys using HKDF
+        // do this once you load the peer public key
         derive_secret();
         derive_keys();
 
@@ -314,6 +347,7 @@ void output_sec(uint8_t* buf, size_t length) {
         }
 
         // generate ENC and MAC key from the shared secret
+        // do this once you load the peer public key
         derive_secret();
         derive_keys();
 
@@ -343,17 +377,39 @@ void output_sec(uint8_t* buf, size_t length) {
         
         // take ONE packet out of the buffer
         // 1. Unpack the packet
-        int cypher_loc = find_location(buf, state_sec, CIPHERTEXT);
-        int cypher_size = get_size(buf, cypher_loc);
+        int cipher_loc = find_location(buf, state_sec, CIPHERTEXT);
+        int cipher_size = get_size(buf, cipher_loc);
         int iv_loc = find_location(buf, state_sec, INITIALIZATION_VECTOR);
         // iv_size is fixed to IV_SIZE (consts.h)
+        int mac_loc = find_location(buf, state_sec, MESSAGE_AUTHENTICATION_CODE);
+        // mac_size is also fixed 
 
-        // 2. Decrypt the ciphertext to plaintext
-        uint8_t* data;
-        int data_size = decrypt_cipher(&buf[cypher_loc], cypher_size, &buf[iv_loc], data);
+        // 2. check the digest and see if it matches with the decrypt_cipher
+        // if not, exit
+        // if matches, proceed to decryption
+        uint8_t* digest = &buf[mac_loc];
 
-        // 3. write decrypted data to standard output
+        // concatenate ciphertext and IV to see if they match
+        int cipher_iv_size = cipher_size + IV_SIZE;
+        uint8_t* cipher_iv = (uint8_t*) malloc(cipher_iv_size);
+        memcpy(cipher_iv, &buf[cipher_loc], cipher_size);
+        memcpy(cipher_iv+cipher_size, &buf[iv_loc], IV_SIZE);
+        hmac(cipher_iv, cipher_iv_size, digest);
+        if (!memcmp(digest, &buf[mac_loc], MAC_SIZE)) // if two digests are different, exit
+        {
+            print("MAC values do not match!");
+            exit(3);
+        }
+
+        // 3. Decrypt the ciphertext to plaintext 
+        uint8_t* data = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: sufficiently big size
+        int data_size = decrypt_cipher(&buf[cipher_loc], cipher_size, &buf[iv_loc], data);
+
+        // 4. write decrypted data to standard output
         output_io(data, data_size); 
+
+        free(cipher_iv);
+        free(data);
         
         break;
     }
@@ -364,14 +420,25 @@ void output_sec(uint8_t* buf, size_t length) {
 
 uint32_t TLV_maker(uint8_t* buf, uint8_t type, uint16_t length, uint8_t* value)
 {   
+    fprintf(stderr, "buf has %p\n", buf);
+    if(buf == NULL)
+    {
+        exit(234);
+    }
+    print("TLV maker entered");
     uint32_t load_size = TYPE_SIZE + LENGTH_SIZE + length;  // T (1B) + L (2B) + V (NONCE_SIZE)
     uint8_t load[load_size];
     load[0] = type;  // type is 1 byte
     // how to copy int into byte array: https://community.intel.com/t5/Intel-Integrated-Performance/Convert-an-int-to-a-byte-array/td-p/888464
     uint16_t len = htons(length);
     memcpy(load+1, &len, sizeof(len)); // length in network should be big-endian
+    print("length copied");
     memcpy(load+3, value, length); // value is arbitary length
+    print("value copied");
+    fprintf(stderr, "buf: %p, load: %p, load_size: %u\n", buf, load, load_size);
+    fprintf(stderr, "bufsize: %lu\n", sizeof(buf));
     memcpy(buf, load, load_size);
+    print("load copied");
     return load_size;
 }
 
@@ -383,6 +450,7 @@ uint32_t TLV_maker(uint8_t* buf, uint8_t type, uint16_t length, uint8_t* value)
 int find_location(uint8_t* data, int state_sec, uint8_t type)
 {
     assert(state_sec == CLIENT_SERVER_HELLO_AWAIT 
+            || state_sec == SERVER_CLIENT_HELLO_AWAIT
             || state_sec == SERVER_KEY_EXCHANGE_REQUEST_AWAIT 
             || state_sec == DATA_STATE);
     
@@ -400,6 +468,7 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
             break;
         }
         if(*locator == SERVER_HELLO 
+            || *locator == CLIENT_HELLO
             || *locator == KEY_EXCHANGE_REQUEST 
             || *locator == DATA)
         {

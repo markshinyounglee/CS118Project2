@@ -3,6 +3,10 @@
 # Notes
 You only need to modify sec.c and fix input_sec() and output_sec().
 
+# Run tests locally
+under /autograder/source/src in Docker, there is client and server. Copy those into submission folder and they will be populated in project folder.
+
+
 # DO THIS BEFORE SUBMISSION
 - delete -L/usr/local/openssl/lib64 (unique for my Debian machine)
 - change load_ca_public_key("./keys/ca_public_key.bin"); to load_ca_public_key("ca_public_key.bin"); and do the same for all init_io() key load calls.
@@ -13,6 +17,8 @@ This repository contains the solution to Project 1. It also has extra code that 
 
 In the `keys` directory, you'll see the files mentioned by the spec. Place these in the current working directory of wherever you're testing. For example, if you run `./client` and your PWD is `/Users/eado`, make sure `ca_public_key.bin` exists in `/Users/eado`. Note that the autograder automatically generates these files--do not rely on the exact contents of them. Read the [spec](https://docs.google.com/document/d/1FmEiFnYRwgBep5xgdoXmsTbzCaiUmznaYc6W-SHPtCs) for more info.
 
+
+If you want to access src files, they are located in /autograder/source/src
 
 # Environment Debugging Notes
 

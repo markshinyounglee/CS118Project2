@@ -17,7 +17,8 @@ interactive:
 	(docker ps | grep $(IMAGE) && \
 	docker exec -it eado0/$(IMAGE) bash) || \
 	docker run --rm --name ${IMAGE} -it \
-		-v ./project:/autograder/submission \
+	--privileged \
+	-v ./project:/autograder/submission \
 		-v ./results:/autograder/results \
 		eado0/$(IMAGE) bash
 
