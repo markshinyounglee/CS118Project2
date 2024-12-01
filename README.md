@@ -4,6 +4,25 @@
 You only need to modify sec.c and fix input_sec() and output_sec().
 
 # Run tests locally
+Move keys under project folder and replace init_sec() in sec.c with
+```shell
+state_sec = initial_state;
+init_io();  // set stdin and stdout as nonblocking
+
+if (state_sec == CLIENT_CLIENT_HELLO_SEND) {
+    generate_private_key(); 
+    derive_public_key(); 
+    derive_self_signed_certificate(); 
+    load_ca_public_key("./keys/ca_public_key.bin"); 
+} else if (state_sec == SERVER_CLIENT_HELLO_AWAIT) { 
+    load_certificate("./keys/server_cert.bin"); 
+    load_private_key("./keys/server_key.bin"); 
+    derive_public_key(); 
+} 
+generate_nonce(nonce, NONCE_SIZE);
+```
+
+If you want to use refclient from docker:
 Under /autograder/source/src in Docker, there is client and server. Copy those into submission folder and they will be populated in project folder.
 
 # How TLS works
