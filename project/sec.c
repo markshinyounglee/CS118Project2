@@ -167,11 +167,15 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // CT refers to the resulting ciphertext size
         // fprintf(stderr, "SEND DATA PT %ld CT %lu\n", stdin_size, cip_size);
         int max_data_len = plaintxt_length(max_length);
+        if (max_data_len <= 0)
+        {
+            return 0; // cannot read anything due to insufficient window size
+        }
         uint8_t* data = (uint8_t*) malloc(max_data_len);
         int data_size = input_io(data, max_data_len);
         if (data_size <= 0)
         {
-            break; // nothing read
+            return 0; // nothing read
         }
 
 
@@ -212,7 +216,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         free(iv_cipher);
         free(digest);
 
-        print_tlv(buf, load_size);
+        //# print_tlv(buf, load_size);
         return load_size;
     }
     default:
@@ -224,7 +228,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 void output_sec(uint8_t* buf, size_t length) {
     // This passes it directly to standard output (working like Project 1)
     // return output_io(buf, length);
-    print_tlv(buf, length);
+    //# print_tlv(buf, length);
 
     switch (state_sec) {
     case SERVER_CLIENT_HELLO_AWAIT: {
@@ -388,7 +392,7 @@ void output_sec(uint8_t* buf, size_t length) {
         // 2. check the digest and see if it matches with the decrypt_cipher
         // if not, exit
         // if matches, proceed to decryption
-        uint8_t* digest = &buf[mac_loc];
+        uint8_t* digest = (uint8_t*) malloc(MAC_SIZE);
 
         // concatenate ciphertext and IV to see if they match
         int cipher_iv_size = cipher_size + IV_SIZE;
@@ -406,11 +410,12 @@ void output_sec(uint8_t* buf, size_t length) {
         uint8_t* data = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: sufficiently big size
         int data_size = decrypt_cipher(&buf[cipher_loc], cipher_size, &buf[iv_loc], data);
 
+        free(cipher_iv);
+        free(digest);
+        free(data);
+
         // 4. write decrypted data to standard output
         output_io(data, data_size); 
-
-        free(cipher_iv);
-        free(data);
         
         break;
     }
@@ -427,7 +432,7 @@ uint32_t TLV_maker(uint8_t* buf, uint8_t type, uint16_t length, uint8_t* value)
         fprintf(stderr, "buffer empty\n");
         exit(139); // SEGSEV (segfault)
     }
-    print("TLV maker entered");
+    //# print("TLV maker entered");
     uint32_t load_size = TYPE_SIZE + LENGTH_SIZE + length;  // T (1B) + L (2B) + V (NONCE_SIZE)
     uint8_t load[load_size];
     load[0] = type;  // type is 1 byte
@@ -460,7 +465,7 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
     int total_size = 0;
     while(1)
     {
-        fprintf(stderr, "locator: %x\n", *locator);
+        //# fprintf(stderr, "locator: %x\n", *locator);
         int currlen = locator - data;
         if(*locator == type)
         {
@@ -476,18 +481,18 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
             || *locator == DATA)
         {
             total_size = 3 + get_size(data, currlen+3);
-            fprintf(stderr, "total_size: %d\n", total_size);
+            //# fprintf(stderr, "total_size: %d\n", total_size);
             locator += 3; // jump to the payload
         }
         else if(*locator == CERTIFICATE || *locator == FINISHED)
         {
-            fprintf(stderr, "certificate or finished encountered\n");
+            //# fprintf(stderr, "certificate or finished encountered\n");
             locator += 3;
         }
         else
         {
             int jump = get_size(data, currlen+3);
-            fprintf(stderr, "jumping %d bytes\n", jump);
+            //# fprintf(stderr, "jumping %d bytes\n", jump);
             locator += (jump + 3);
         }
     }
@@ -500,11 +505,13 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
 uint16_t get_size(uint8_t* data, int bufloc) 
 {
     uint16_t retval = ntohs(*((uint16_t*) &data[bufloc-2]));
-    fprintf(stderr, "field size: %u\n", retval);
+    //# fprintf(stderr, "field size: %u\n", retval);
     return retval; // convert to little endian
 }
 // compute the max length of plain text that could be read at a time
 uint16_t plaintxt_length(uint16_t payload_length)
 {
-    return ((payload_length - 60) / 16) * 16 - 1;
+    uint16_t retval = ((int)((payload_length - 60) / 16)) * 16 - 1; 
+    //# fprintf(stderr, "modified payload for ciphertext: %d\n", retval);
+    return retval;
 }
