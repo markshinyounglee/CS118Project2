@@ -4,7 +4,23 @@
 You only need to modify sec.c and fix input_sec() and output_sec().
 
 # Run tests locally
-under /autograder/source/src in Docker, there is client and server. Copy those into submission folder and they will be populated in project folder.
+Under /autograder/source/src in Docker, there is client and server. Copy those into submission folder and they will be populated in project folder.
+
+# How TLS works
+After the 3-way handshake for establishing TCP connection, we have additional handshake to exchange public keys between server and client. 
+Exchanging the public keys and verifying that the keys are correct involves third-party certification authority which issues the certificate that the client can use
+to verify that the public key holder is verified by the certification authority.
+After the client and server exchange public key, they both use both keys to derive shared secret (ENC and MAC keys), which are in turn used to convert plain text into cypher text and IV. 
+
+
+# Helpful debugging tips
+- Using unittest to test individual functions helps a lot.
+- Using print statements adroitly helps identify the region where the code fails.
+- fsanitize=address helps identify where the memory leak is happening
+- when in doubt (especially where the memory leak is happening), always print the pointer address. This helps identify where the memory is going out of bounds.
+- make sure the types are properly declared (for instance, having uint16_t as the return type introduced many errors)
+- use xxd to convert .bin to hexadecimal files, and then use `diff -u` to see the differences if test.bin and client.bin (or server.bin) differ.
+- (not too recommended) strace --signal=SEGV could also be used but oftentimes it clogs up the code
 
 
 # DO THIS BEFORE SUBMISSION

@@ -25,10 +25,10 @@ void init_sec(int initial_state) {
         generate_private_key(); 
         derive_public_key(); 
         derive_self_signed_certificate(); 
-        load_ca_public_key("./keys/ca_public_key.bin"); 
+        load_ca_public_key("ca_public_key.bin"); 
     } else if (state_sec == SERVER_CLIENT_HELLO_AWAIT) { 
-        load_certificate("./keys/server_cert.bin"); 
-        load_private_key("./keys/server_key.bin"); 
+        load_certificate("server_cert.bin"); 
+        load_private_key("server_key.bin"); 
         derive_public_key(); 
     } 
     generate_nonce(nonce, NONCE_SIZE);
@@ -414,15 +414,15 @@ void output_sec(uint8_t* buf, size_t length) {
         uint8_t* digest = (uint8_t*) malloc(MAC_SIZE);
 
         // concatenate ciphertext and IV to see if they match
-        int cipher_iv_size = cipher_size + IV_SIZE;
-        uint8_t* cipher_iv = (uint8_t*) malloc(cipher_iv_size);
+        int iv_cipher_size = IV_SIZE + cipher_size;
+        uint8_t* iv_cipher = (uint8_t*) malloc(iv_cipher_size);
         print("100");
-        memcpy(cipher_iv, &buf[cipher_loc], cipher_size);
+        memcpy(iv_cipher, &buf[iv_loc], IV_SIZE);
         print("101");
-        memcpy(cipher_iv+cipher_size, &buf[iv_loc], IV_SIZE);
+        memcpy(iv_cipher+IV_SIZE, &buf[cipher_loc], cipher_size);
         print("102");
-        hmac(cipher_iv, cipher_iv_size, digest);
-        if (!memcmp(digest, &buf[mac_loc], MAC_SIZE)) // if two digests are different, exit
+        hmac(iv_cipher, iv_cipher_size, digest);
+        if (memcmp(digest, &buf[mac_loc], MAC_SIZE) != 0) // if two digests are different, exit
         {
             print("MAC values do not match!");
             exit(3);
@@ -437,7 +437,7 @@ void output_sec(uint8_t* buf, size_t length) {
 
         // 5. free all memories
         print("checkpoint 1");
-        free(cipher_iv);
+        free(iv_cipher);
         print("checkpoint 2");
         free(digest);
         print("checkpoint 3");
