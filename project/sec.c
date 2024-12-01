@@ -38,6 +38,7 @@ void init_sec(int initial_state) {
 // this implements a FSM (finite state machine)
 // TODO: put something into the buffer
 ssize_t input_sec(uint8_t* buf, size_t max_length) {
+    print("input_sec");
     // This passes it directly to standard input (working like Project 1)
     // return input_io(buf, max_length);
 
@@ -178,31 +179,47 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
             return 0; // nothing read
         }
 
+        fprintf(stderr, "max_length: %lu\n", max_length);
+        fprintf(stderr, "max_data_len: %d\n", max_data_len);
+        fprintf(stderr, "data_size: %d\n", data_size);
 
         uint8_t *iv, *ciphertext, *digest;
         iv = (uint8_t*) malloc(IV_SIZE + 3);
-        ciphertext = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: sufficiently big size
+        ciphertext = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: need sufficient size
         digest = (uint8_t*) malloc(MAC_SIZE + 3);
+
+        print("iv ciphertext digest passed");
 
         // iv is fixed as 16 bytes
         // populate iv and cypertext
+        fprintf(stderr, "iv: %p\n", iv);
+        fprintf(stderr, "ciphertext: %p\n", ciphertext);
+        fprintf(stderr, "data: %p\n", data);
         int ciphertext_size = encrypt_data(data, data_size, iv, ciphertext);
         // get an HMAC SHA-256 digest of data
         uint8_t* iv_cipher = (uint8_t*) malloc(IV_SIZE + ciphertext_size);
+        print("000");
         memcpy(iv_cipher, iv, IV_SIZE);
-        memcpy(iv_cipher, ciphertext, ciphertext_size); 
-        hmac(iv_cipher, data_size, digest);
+        print("001");
+        memcpy(iv_cipher+IV_SIZE, ciphertext, ciphertext_size); 
+        print("002");
+        hmac(iv_cipher, IV_SIZE + ciphertext_size, digest);
 
+        print("hmac passed");
         // create TLV packets for each component
         int iv_size = TLV_maker(iv, INITIALIZATION_VECTOR, IV_SIZE, iv);
         ciphertext_size = TLV_maker(ciphertext, CIPHERTEXT, ciphertext_size, ciphertext);
         int digest_size = TLV_maker(digest, MESSAGE_AUTHENTICATION_CODE, MAC_SIZE, digest);
+        print("digest_size passed");
 
         int load_size = iv_size + ciphertext_size + digest_size;
         uint8_t* load = (uint8_t*) malloc(load_size);
         memcpy(load, iv, iv_size);
+        print("003");
         memcpy(load+iv_size, ciphertext, ciphertext_size);
+        print("004");
         memcpy(load+iv_size+ciphertext_size, digest, digest_size);
+        print("005");
         load_size = TLV_maker(buf, DATA, load_size, load);
         // Macros for reference
         // #define DATA 0x40
@@ -210,12 +227,13 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         // #define CIPHERTEXT 0x42
         // #define MESSAGE_AUTHENTICATION_CODE 0x43
 
+        
         free(data);
         free(iv);
         free(ciphertext);
         free(iv_cipher);
         free(digest);
-
+        
         //# print_tlv(buf, load_size);
         return load_size;
     }
@@ -226,6 +244,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
 // TODO: write content of buffer to STDOUT or something
 void output_sec(uint8_t* buf, size_t length) {
+    print("output_sec");
     // This passes it directly to standard output (working like Project 1)
     // return output_io(buf, length);
     //# print_tlv(buf, length);
@@ -397,8 +416,11 @@ void output_sec(uint8_t* buf, size_t length) {
         // concatenate ciphertext and IV to see if they match
         int cipher_iv_size = cipher_size + IV_SIZE;
         uint8_t* cipher_iv = (uint8_t*) malloc(cipher_iv_size);
+        print("100");
         memcpy(cipher_iv, &buf[cipher_loc], cipher_size);
+        print("101");
         memcpy(cipher_iv+cipher_size, &buf[iv_loc], IV_SIZE);
+        print("102");
         hmac(cipher_iv, cipher_iv_size, digest);
         if (!memcmp(digest, &buf[mac_loc], MAC_SIZE)) // if two digests are different, exit
         {
@@ -410,12 +432,17 @@ void output_sec(uint8_t* buf, size_t length) {
         uint8_t* data = (uint8_t*) malloc(MAX_PAYLOAD); // TODO: sufficiently big size
         int data_size = decrypt_cipher(&buf[cipher_loc], cipher_size, &buf[iv_loc], data);
 
-        free(cipher_iv);
-        free(digest);
-        free(data);
-
         // 4. write decrypted data to standard output
         output_io(data, data_size); 
+
+        // 5. free all memories
+        print("checkpoint 1");
+        free(cipher_iv);
+        print("checkpoint 2");
+        free(digest);
+        print("checkpoint 3");
+        free(data);
+        print("all freed");
         
         break;
     }
@@ -504,14 +531,12 @@ int find_location(uint8_t* data, int state_sec, uint8_t type)
 // location is found by find_location
 uint16_t get_size(uint8_t* data, int bufloc) 
 {
-    uint16_t retval = ntohs(*((uint16_t*) &data[bufloc-2]));
-    //# fprintf(stderr, "field size: %u\n", retval);
-    return retval; // convert to little endian
+    return ntohs(*((uint16_t*) &data[bufloc-2]));
 }
 // compute the max length of plain text that could be read at a time
-uint16_t plaintxt_length(uint16_t payload_length)
+int plaintxt_length(uint16_t payload_length)
 {
-    uint16_t retval = ((int)((payload_length - 60) / 16)) * 16 - 1; 
-    //# fprintf(stderr, "modified payload for ciphertext: %d\n", retval);
-    return retval;
+    return ((int)((payload_length - 60) / 16)) * 16 - 1; 
 }
+
+// for future, do unittesting to test individual function

@@ -1,6 +1,6 @@
 CC=gcc
-CFLAGS=-s -lcrypto -fsanitize=address -g
-# delete -L/usr/local/openssl/lib64  when submitting
+CFLAGS=-s -lcrypto 
+# delete -L/usr/local/openssl/lib64 -fsanitize=address -g when submitting
 
 all: clean build
 
